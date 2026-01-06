@@ -2,15 +2,16 @@ from __future__ import annotations
 
 import csv
 import re
-from dataclasses import dataclass
-from typing import List, Optional, Dict, Any
+import time
+from collections import defaultdict
+from dataclasses import dataclass, asdict
+from typing import Any, Dict, Iterable, List, Optional
+from urllib.parse import quote_plus
 
-from playwright.sync_api import sync_playwright, Page
+from flask import Flask, jsonify, render_template, request
+from playwright.sync_api import TimeoutError, sync_playwright
 
-search = input("what would you like to search for?")
-
-BASE_URL = "https://www.pawnamerica.com"
-SEARCH_URL = f"https://www.pawnamerica.com/Shop?query={str(search)}"
+app = Flask(__name__, template_folder="templates")
 
 
 @dataclass(frozen=True)
@@ -18,9 +19,50 @@ class Product:
     name: str
     price: Optional[float]
     url: str
+    source: str
 
 
 PRICE_PATTERN = re.compile(r"\$\s*([0-9]{1,3}(?:,[0-9]{3})*|[0-9]+)(?:\.(\d{2}))?")
+DEFAULT_SETTLE_MS = 1600
+
+SEARCH_PROVIDERS: List[Dict[str, Any]] = [
+    {
+        "id": "pawnamerica",
+        "name": "Pawn America",
+        "base_url": "https://www.pawnamerica.com",
+        "search_url": "https://www.pawnamerica.com/Shop?query={query}",
+    },
+    {
+        "id": "ebay",
+        "name": "eBay",
+        "base_url": "https://www.ebay.com",
+        "search_url": "https://www.ebay.com/sch/i.html?_nkw={query}",
+    },
+    {
+        "id": "newegg",
+        "name": "Newegg",
+        "base_url": "https://www.newegg.com",
+        "search_url": "https://www.newegg.com/p/pl?d={query}",
+    },
+    {
+        "id": "slickdeals",
+        "name": "Slickdeals",
+        "base_url": "https://slickdeals.net",
+        "search_url": "https://slickdeals.net/newsearch.php?src=SearchBarV2&q={query}&pp=25",
+    },
+    {
+        "id": "walmart",
+        "name": "Walmart",
+        "base_url": "https://www.walmart.com",
+        "search_url": "https://www.walmart.com/search?q={query}",
+    },
+    {
+        "id": "bestbuy",
+        "name": "Best Buy",
+        "base_url": "https://www.bestbuy.com",
+        "search_url": "https://www.bestbuy.com/site/searchpage.jsp?st={query}",
+    },
+]
 
 
 def parse_price_to_float(price_text: str) -> Optional[float]:
@@ -43,37 +85,23 @@ def parse_price_to_float(price_text: str) -> Optional[float]:
     return float(f"{dollars_part}.{cents_part}")
 
 
-def normalize_url(href: str) -> str:
+def normalize_url(href: str, base_url: str) -> str:
     if href.startswith("http://") or href.startswith("https://"):
         return href
     if href.startswith("/"):
-        return f"{BASE_URL}{href}"
-    return f"{BASE_URL}/{href}"
+        return f"{base_url}{href}"
+    return f"{base_url}/{href}"
 
 
-def extract_products_from_dom(page: Page) -> List[Dict[str, Any]]:
+def extract_products_from_dom(page) -> List[Dict[str, Any]]:
     """
     Extract products by scanning links and pulling name + price from a nearby container.
-    This is intentionally "structure-agnostic" to survive CSS/classname changes.
+    The selector intentionally avoids brittle class names to survive UI changes.
     """
     extraction_script = r"""
     () => {
-      const isProbablyProductLink = (href) => {
-        if (!href) return false;
-        const h = href.toLowerCase();
-        // Common patterns on ecommerce sites:
-        if (h.includes('/product')) return true;
-        if (h.includes('/item')) return true;
-        if (h.includes('/p/')) return true;
-        // PawnAmerica sometimes uses simple paths; keep it a bit permissive:
-        if (h.includes('/shop/') || h.includes('/shop?')) return false;
-        return false;
-      };
-
       const priceRegex = /\$\s*\d[\d,]*(?:\.\d{2})?/;
-
-      const links = Array.from(document.querySelectorAll('a[href]'))
-        .filter(a => isProbablyProductLink(a.getAttribute('href')));
+      const links = Array.from(document.querySelectorAll('a[href]'));
 
       const results = [];
       const seen = new Set();
@@ -82,7 +110,6 @@ def extract_products_from_dom(page: Page) -> List[Dict[str, Any]]:
         const href = link.getAttribute('href');
         if (!href) continue;
 
-        // Build a "card" candidate by walking up a few parents and grabbing text
         let container = link;
         let containerText = '';
         for (let i = 0; i < 7; i++) {
@@ -92,7 +119,8 @@ def extract_products_from_dom(page: Page) -> List[Dict[str, Any]]:
           container = container.parentElement;
         }
 
-        // Name heuristics: link text, otherwise image alt nearby
+        if (!priceRegex.test(containerText)) continue;
+
         let name = (link.innerText || '').trim();
         if (!name) {
           const img = link.querySelector('img[alt]') || (container ? container.querySelector('img[alt]') : null);
@@ -102,7 +130,6 @@ def extract_products_from_dom(page: Page) -> List[Dict[str, Any]]:
         const priceMatch = containerText.match(priceRegex);
         const priceText = priceMatch ? priceMatch[0] : '';
 
-        // Avoid junk/duplicates
         const key = href + '|' + name + '|' + priceText;
         if (seen.has(key)) continue;
         seen.add(key);
@@ -111,8 +138,6 @@ def extract_products_from_dom(page: Page) -> List[Dict[str, Any]]:
           href,
           name,
           priceText,
-          // for highlighting later:
-          domPathHint: null
         });
       }
 
@@ -122,58 +147,7 @@ def extract_products_from_dom(page: Page) -> List[Dict[str, Any]]:
     return page.evaluate(extraction_script)
 
 
-def highlight_detected_products(page: Page) -> None:
-    """
-    Adds outlines + small index badges to product links the script considers products.
-    """
-    highlight_script = r"""
-    () => {
-      const isProbablyProductLink = (href) => {
-        if (!href) return false;
-        const h = href.toLowerCase();
-        if (h.includes('/product')) return true;
-        if (h.includes('/item')) return true;
-        if (h.includes('/p/')) return true;
-        return false;
-      };
-
-      const candidates = Array.from(document.querySelectorAll('a[href]'))
-        .filter(a => isProbablyProductLink(a.getAttribute('href')));
-
-      candidates.forEach((a, idx) => {
-        a.style.outline = '3px solid #00ff88';
-        a.style.outlineOffset = '2px';
-        a.style.position = 'relative';
-
-        // Badge
-        const badge = document.createElement('span');
-        badge.textContent = String(idx + 1);
-        badge.style.position = 'absolute';
-        badge.style.top = '-10px';
-        badge.style.left = '-10px';
-        badge.style.background = '#00ff88';
-        badge.style.color = '#000';
-        badge.style.padding = '2px 6px';
-        badge.style.borderRadius = '999px';
-        badge.style.fontSize = '12px';
-        badge.style.fontWeight = '700';
-        badge.style.zIndex = '999999';
-
-        // Only add if not already added
-        if (!a.dataset._highlighted) {
-          a.dataset._highlighted = '1';
-          a.appendChild(badge);
-        }
-      });
-
-      return candidates.length;
-    }
-    """
-    total_highlighted = page.evaluate(highlight_script)
-    print(f"[debug] highlighted {total_highlighted} candidate product links in the browser")
-
-
-def coerce_products(raw_items: List[Dict[str, Any]]) -> List[Product]:
+def coerce_products(raw_items: Iterable[Dict[str, Any]], *, base_url: str, source: str, max_items: int) -> List[Product]:
     products: List[Product] = []
     seen_urls = set()
 
@@ -182,7 +156,7 @@ def coerce_products(raw_items: List[Dict[str, Any]]) -> List[Product]:
         if not href:
             continue
 
-        full_url = normalize_url(href)
+        full_url = normalize_url(href, base_url)
         if full_url in seen_urls:
             continue
         seen_urls.add(full_url)
@@ -191,60 +165,121 @@ def coerce_products(raw_items: List[Dict[str, Any]]) -> List[Product]:
         price_text = (item.get("priceText") or "").strip()
         price = parse_price_to_float(price_text) if price_text else None
 
-        # If the name is empty, still keep it (we’ll show it), but try to avoid pure blanks
         if not name:
             name = "(no name found)"
 
-        products.append(Product(name=name, price=price, url=full_url))
+        products.append(Product(name=name, price=price, url=full_url, source=source))
+        if len(products) >= max_items:
+            break
 
-    # Sort: cheapest first, unknown prices last
     products.sort(key=lambda p: (p.price is None, p.price if p.price is not None else 10**12))
     return products
+
+
+def scrape_provider_page(page, provider: Dict[str, Any], query: str, *, max_items: int) -> List[Product]:
+    base_url = provider["base_url"]
+    search_url = provider["search_url"].format(query=quote_plus(query))
+
+    page.goto(search_url, wait_until="domcontentloaded", timeout=35000)
+    page.wait_for_timeout(provider.get("settle_ms", DEFAULT_SETTLE_MS))
+
+    raw_items = extract_products_from_dom(page)
+    return coerce_products(
+        raw_items,
+        base_url=base_url,
+        source=provider["name"],
+        max_items=max_items,
+    )
+
+
+def scrape_all_providers(query: str, *, max_items_per_site: int = 35) -> List[Product]:
+    all_products: List[Product] = []
+    started = time.perf_counter()
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        context = browser.new_context(viewport={"width": 1400, "height": 900})
+
+        for provider in SEARCH_PROVIDERS:
+            page = context.new_page()
+            try:
+                products = scrape_provider_page(
+                    page,
+                    provider,
+                    query,
+                    max_items=max_items_per_site,
+                )
+            except TimeoutError:
+                products = []
+            finally:
+                page.close()
+            all_products.extend(products)
+
+        context.close()
+        browser.close()
+
+    elapsed = time.perf_counter() - started
+    print(f"[debug] scraped {len(all_products)} products in {elapsed:.2f}s across {len(SEARCH_PROVIDERS)} sites")
+    all_products.sort(key=lambda p: (p.price is None, p.price if p.price is not None else 10**12))
+    return all_products
 
 
 def save_to_csv(products: List[Product], csv_path: str) -> None:
     with open(csv_path, "w", newline="", encoding="utf-8") as file_handle:
         writer = csv.writer(file_handle)
-        writer.writerow(["name", "price", "url"])
+        writer.writerow(["name", "price", "url", "source"])
         for product in products:
-            writer.writerow([product.name, "" if product.price is None else f"{product.price:.2f}", product.url])
+            writer.writerow([
+                product.name,
+                "" if product.price is None else f"{product.price:.2f}",
+                product.url,
+                product.source,
+            ])
 
 
-def main() -> None:
-    print("Launching browser…")
-    with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=True, slow_mo=50)
-        context = browser.new_context(viewport={"width": 1200, "height": 900})
-        page = context.new_page()
+def group_by_source(products: Iterable[Product]) -> Dict[str, List[Product]]:
+    grouped: Dict[str, List[Product]] = defaultdict(list)
+    for product in products:
+        grouped[product.source].append(product)
+    return grouped
 
-        print(f"Opening: {SEARCH_URL}")
-        page.goto(SEARCH_URL, wait_until="domcontentloaded")
-        page.wait_for_timeout(1500)  # give JS a moment
 
-        # Try to wait for *something* product-ish to appear
-        page.wait_for_timeout(1500)
+@app.route("/")
+def index():
+    query = (request.args.get("q") or "").strip()
+    max_items = int(request.args.get("limit") or 35)
 
-        # Highlight what we think are products
-        highlight_detected_products(page)
+    products: List[Product] = []
+    grouped: Dict[str, List[Product]] = {}
+    if query:
+        products = scrape_all_providers(query, max_items_per_site=max_items)
+        grouped = group_by_source(products)
 
-        # Extract
-        raw_items = extract_products_from_dom(page)
-        products = coerce_products(raw_items)
+    return render_template(
+        "index.html",
+        query=query,
+        products=products,
+        grouped=grouped,
+        providers=SEARCH_PROVIDERS,
+    )
 
-        print("\n=== Parsed Products (name / price / link) ===")
-        for index, product in enumerate(products, start=1):
-            price_display = "N/A" if product.price is None else f"${product.price:.2f}"
-            print(f"{index:>3}. {price_display:<10} {product.name} | {product.url}")
 
-        csv_path = "pawnamerica_pokemon.csv"
-        save_to_csv(products, csv_path)
-        print(f"\nSaved: {csv_path}")
+@app.route("/api/search")
+def api_search():
+    query = (request.args.get("q") or "").strip()
+    max_items = int(request.args.get("limit") or 35)
 
-        input("\nBrowser is open and highlighted. Press ENTER here to close it…")
-        context.close()
-        browser.close()
+    if not query:
+        return jsonify({"error": "Query is required"}), 400
+
+    products = scrape_all_providers(query, max_items_per_site=max_items)
+    return jsonify({"results": [asdict(p) for p in products]})
+
+
+@app.route("/health")
+def health():
+    return {"status": "ok"}
 
 
 if __name__ == "__main__":
-    main()
-
+    app.run(host="0.0.0.0", port=5000, debug=True)
