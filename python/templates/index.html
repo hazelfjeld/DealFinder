@@ -100,6 +100,19 @@
       flex-direction: column;
       gap: 8px;
     }
+    .card-media {
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+    }
+    .thumb {
+      width: 64px;
+      height: 64px;
+      border-radius: 12px;
+      background: rgba(255,255,255,0.06);
+      object-fit: cover;
+      flex-shrink: 0;
+    }
     .card h3 {
       margin: 0;
       font-size: 16px;
@@ -127,7 +140,42 @@
     .empty { text-align: center; margin-top: 40px; color: var(--muted); }
     .tag-list { display: flex; gap: 10px; flex-wrap: wrap; }
     .chip { padding: 8px 12px; border-radius: 999px; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.06); }
+    .chip-toggle { cursor: pointer; transition: opacity 0.2s ease; }
+    .chip-toggle.inactive { opacity: 0.4; }
     .footer { margin-top: 32px; color: var(--muted); text-align: center; font-size: 13px; }
+    .progress-area {
+      margin-top: 18px;
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 16px;
+      padding: 14px 16px;
+      background: rgba(255,255,255,0.03);
+    }
+    .progress-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .progress-bar {
+      margin-top: 10px;
+      height: 10px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.08);
+      overflow: hidden;
+    }
+    .progress-bar span {
+      display: block;
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      transition: width 0.3s ease;
+    }
+    .progress-sites {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 12px;
+    }
+    .progress-sites .chip[data-status="ok"] { background: rgba(142, 246, 200, 0.14); }
+    .progress-sites .chip[data-status="error"] { background: rgba(255, 120, 120, 0.16); }
+    .progress-sites .chip[data-status="timeout"] { background: rgba(255, 200, 120, 0.16); }
+    .progress-sites .chip[data-status="empty"] { background: rgba(255, 227, 122, 0.22); color: #f7e9a3; }
+    .hidden { display: none; }
   </style>
 </head>
 <body>
@@ -156,29 +204,70 @@
         aria-label="Max results per site"
         title="Max results per site"
       />
+      <select name="sort" aria-label="Sort order" title="Sort order">
+        <option value="relevance" {% if request.args.get('sort', 'relevance') == 'relevance' %}selected{% endif %}>Relevance</option>
+        <option value="price_low" {% if request.args.get('sort') == 'price_low' %}selected{% endif %}>Price low to high</option>
+        <option value="price_high" {% if request.args.get('sort') == 'price_high' %}selected{% endif %}>Price high to low</option>
+        <option value="ending_soon" {% if request.args.get('sort') == 'ending_soon' %}selected{% endif %}>Ending soonest (auctions)</option>
+      </select>
+      <label class="pill" style="cursor: pointer;">
+        <input
+          type="checkbox"
+          name="auctions"
+          value="1"
+          style="margin: 0 8px 0 0;"
+          {% if request.args.get('auctions', '1') != '0' %}checked{% endif %}
+        />
+        Include auctions
+      </label>
       <button type="submit">Find deals</button>
     </form>
 
+    <div id="progress-area" class="progress-area hidden" aria-live="polite">
+      <div class="progress-header">
+        <div>
+          <strong>Scraping in progress</strong>
+          <div class="muted" id="progress-text">Starting…</div>
+        </div>
+        <div class="pill" id="progress-count">0 / {{ providers|length }}</div>
+      </div>
+      <div class="progress-bar"><span id="progress-bar"></span></div>
+      <div class="progress-sites" id="progress-sites">
+        {% for provider in providers %}
+          <div class="chip" data-provider="{{ provider.id }}">{{ provider.name }}</div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div id="results-area">
     {% if products %}
       <div class="section-title">
         <div>
-          <h2 style="margin: 16px 0 4px 0;">Best prices first</h2>
-          <div class="muted">Showing {{ products|length }} combined matches</div>
+          <h2 style="margin: 16px 0 4px 0;">Results</h2>
+          <div class="muted" id="results-count">Showing {{ products|length }} combined matches</div>
+          <div class="muted">Sorted by {{ request.args.get('sort', 'relevance')|replace('_', ' ') }}</div>
         </div>
         <div class="tag-list">
           {% for provider in providers %}
-            <div class="chip">{{ provider.name }}</div>
+            <div class="chip chip-toggle" data-source="{{ provider.name }}">{{ provider.name }}</div>
           {% endfor %}
         </div>
       </div>
 
       <div class="results-grid">
         {% for product in products %}
-          <div class="card">
+          <div class="card" data-source="{{ product.source }}">
             <div class="source">{{ product.source }}</div>
-            <h3><a href="{{ product.url }}" target="_blank" rel="noreferrer">{{ product.name }}</a></h3>
-            <div class="price">{{ "$%.2f"|format(product.price) if product.price is not none else "Price N/A" }}</div>
-            <div class="meta">{{ product.url }}</div>
+            <div class="card-media">
+              {% if product.image_url %}
+                <img class="thumb" src="{{ product.image_url }}" alt="">
+              {% endif %}
+              <div>
+                <h3><a href="{{ product.url }}" target="_blank" rel="noreferrer">{{ product.name }}</a></h3>
+                <div class="price">{{ "$%.2f"|format(product.price) if product.price is not none else "Price N/A" }}</div>
+                <div class="meta">{{ product.url }}</div>
+              </div>
+            </div>
           </div>
         {% endfor %}
       </div>
@@ -188,7 +277,7 @@
       </div>
       <div class="results-grid">
         {% for source, items in grouped.items() %}
-          <div class="card">
+          <div class="card" data-source="{{ source }}">
             <div class="source">{{ source }}</div>
             <div class="muted">{{ items|length }} items</div>
             <ul style="padding-left: 18px; margin: 10px 0 0 0;">
@@ -204,8 +293,274 @@
     {% else %}
       <div class="empty">Search for something to start aggregating deals.</div>
     {% endif %}
+    </div>
 
     <div class="footer">Tip: use specific terms (e.g. "RTX 4070", "Jordan 1", "OLED TV") for cleaner matches.</div>
   </main>
+
+  <script>
+    const form = document.querySelector("form");
+    const progressArea = document.getElementById("progress-area");
+    const progressText = document.getElementById("progress-text");
+    const progressCount = document.getElementById("progress-count");
+    const progressBar = document.getElementById("progress-bar");
+    const progressSites = document.getElementById("progress-sites");
+    const resultsArea = document.getElementById("results-area");
+    const resultsCount = document.getElementById("results-count");
+
+    const escapeHtml = (value) =>
+      String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+
+    const STOPWORDS = new Set([
+      "a","an","and","are","by","deal","deals","for","from","in","of","on","or","sale","the","to","with",
+    ]);
+    let lastResults = [];
+    let lastQuery = "";
+
+    const tokenize = (text) => (text || "").toLowerCase().match(/[a-z0-9]+/g) || [];
+
+    const sortLabelFor = (sort) => {
+      if (sort === "price_high") return "price high to low";
+      if (sort === "price_low") return "price low to high";
+      if (sort === "ending_soon") return "ending soonest";
+      return "relevance";
+    };
+
+    const sortResults = (results, sort, query) => {
+      if (!results.length) {
+        return results;
+      }
+      if (sort === "price_high") {
+        return [...results].sort((a, b) => {
+          const aPrice = a.price ?? Number.NEGATIVE_INFINITY;
+          const bPrice = b.price ?? Number.NEGATIVE_INFINITY;
+          return bPrice - aPrice;
+        });
+      }
+      if (sort === "price_low") {
+        return [...results].sort((a, b) => {
+          const aPrice = a.price ?? Number.POSITIVE_INFINITY;
+          const bPrice = b.price ?? Number.POSITIVE_INFINITY;
+          return aPrice - bPrice;
+        });
+      }
+      if (sort === "ending_soon") {
+        return [...results].sort((a, b) => {
+          const aEnd = a.auction_end ?? Number.POSITIVE_INFINITY;
+          const bEnd = b.auction_end ?? Number.POSITIVE_INFINITY;
+          return aEnd - bEnd;
+        });
+      }
+      const tokens = tokenize(query).filter((token) => token.length > 1 && !STOPWORDS.has(token));
+      return [...results].sort((a, b) => {
+        const aName = (a.name || "").toLowerCase();
+        const bName = (b.name || "").toLowerCase();
+        const aTokens = new Set(tokenize(a.name));
+        const bTokens = new Set(tokenize(b.name));
+        const aMatch = tokens.filter((token) => aTokens.has(token)).length;
+        const bMatch = tokens.filter((token) => bTokens.has(token)).length;
+        const aExact = aName.includes(query.toLowerCase()) ? 1 : 0;
+        const bExact = bName.includes(query.toLowerCase()) ? 1 : 0;
+        if (aExact !== bExact) return bExact - aExact;
+        if (aMatch !== bMatch) return bMatch - aMatch;
+        const aMissing = tokens.length - aMatch;
+        const bMissing = tokens.length - bMatch;
+        if (aMissing !== bMissing) return aMissing - bMissing;
+        const aPrice = a.price ?? Number.POSITIVE_INFINITY;
+        const bPrice = b.price ?? Number.POSITIVE_INFINITY;
+        return aPrice - bPrice;
+      });
+    };
+
+    const renderResults = (results, sort) => {
+      if (!results.length) {
+        resultsArea.innerHTML = '<div class="empty">No results found. Try another search or increase the result limit.</div>';
+        return;
+      }
+
+      const sources = Array.from(new Set(results.map((item) => item.source)));
+      const bySource = results.reduce((acc, item) => {
+        acc[item.source] = acc[item.source] || [];
+        acc[item.source].push(item);
+        return acc;
+      }, {});
+
+      const cards = results.map((item) => `
+        <div class="card" data-source="${escapeHtml(item.source)}">
+          <div class="source">${escapeHtml(item.source)}</div>
+          <div class="card-media">
+            ${item.image_url ? `<img class="thumb" src="${escapeHtml(item.image_url)}" alt="">` : ""}
+            <div>
+              <h3><a href="${escapeHtml(item.url)}" target="_blank" rel="noreferrer">${escapeHtml(item.name)}</a></h3>
+              <div class="price">${item.price !== null ? `$${item.price.toFixed(2)}` : "Price N/A"}</div>
+              <div class="meta">${escapeHtml(item.url)}</div>
+            </div>
+          </div>
+        </div>
+      `).join("");
+
+      const sourceCards = sources.map((source) => {
+        const items = bySource[source] || [];
+        const list = items.slice(0, 6).map((item) => `
+          <li><a href="${escapeHtml(item.url)}" target="_blank" rel="noreferrer">${escapeHtml(item.name)}</a></li>
+        `).join("");
+        return `
+          <div class="card" data-source="${escapeHtml(source)}">
+            <div class="source">${escapeHtml(source)}</div>
+            <div class="muted">${items.length} items</div>
+            <ul style="padding-left: 18px; margin: 10px 0 0 0;">
+              ${list}
+            </ul>
+          </div>
+        `;
+      }).join("");
+
+      const chips = sources.map((source) => `<div class="chip chip-toggle" data-source="${escapeHtml(source)}">${escapeHtml(source)}</div>`).join("");
+
+      const sortLabel = sortLabelFor(sort);
+      resultsArea.innerHTML = `
+        <div class="section-title">
+          <div>
+            <h2 style="margin: 16px 0 4px 0;">Results</h2>
+            <div class="muted" id="results-count">Showing ${results.length} combined matches</div>
+            <div class="muted" id="results-sort">Sorted by ${escapeHtml(sortLabel)}</div>
+          </div>
+          <div class="tag-list">${chips}</div>
+        </div>
+        <div class="results-grid">${cards}</div>
+        <div class="section-title">
+          <h2 style="margin: 24px 0 8px 0;">Breakdown by source</h2>
+        </div>
+        <div class="results-grid">${sourceCards}</div>
+      `;
+
+      initSourceFilters();
+    };
+
+    const initSourceFilters = () => {
+      const chips = Array.from(document.querySelectorAll(".chip-toggle[data-source]"));
+      if (!chips.length) {
+        return;
+      }
+
+      const activeSources = new Set(chips.map((chip) => chip.dataset.source));
+
+      const applyFilter = () => {
+        const grids = Array.from(document.querySelectorAll(".results-grid"));
+        const mainGrid = grids[0] || null;
+        const cards = Array.from(document.querySelectorAll(".results-grid .card[data-source]"));
+        let visible = 0;
+
+        cards.forEach((card) => {
+          const source = card.dataset.source;
+          const show = activeSources.has(source);
+          card.classList.toggle("hidden", !show);
+          if (show && mainGrid && card.closest(".results-grid") === mainGrid) {
+            visible += 1;
+          }
+        });
+
+        const countEl = document.getElementById("results-count");
+        if (countEl && mainGrid) {
+          countEl.textContent = `Showing ${visible} combined matches`;
+        }
+      };
+
+      chips.forEach((chip) => {
+        chip.addEventListener("click", () => {
+          const source = chip.dataset.source;
+          if (activeSources.has(source)) {
+            activeSources.delete(source);
+            chip.classList.add("inactive");
+          } else {
+            activeSources.add(source);
+            chip.classList.remove("inactive");
+          }
+          applyFilter();
+        });
+      });
+
+      applyFilter();
+    };
+
+    const startSearch = (query, limit) => {
+      if (!query) {
+        return;
+      }
+
+      lastQuery = query;
+      lastResults = [];
+      resultsArea.innerHTML = "";
+      progressArea.classList.remove("hidden");
+      progressBar.style.width = "0%";
+      progressText.textContent = "Starting…";
+      progressCount.textContent = `0 / ${progressSites.children.length}`;
+
+      Array.from(progressSites.children).forEach((chip) => {
+        chip.removeAttribute("data-status");
+      });
+
+      const auctions = form.querySelector('input[name="auctions"]')?.checked ? "1" : "0";
+      const sort = form.querySelector('select[name="sort"]')?.value || "relevance";
+      const streamUrl = `/api/search/stream?q=${encodeURIComponent(query)}&limit=${encodeURIComponent(limit)}&auctions=${encodeURIComponent(auctions)}&sort=${encodeURIComponent(sort)}`;
+      const eventSource = new EventSource(streamUrl);
+
+      eventSource.onmessage = (event) => {
+        const payload = JSON.parse(event.data);
+        if (payload.type === "progress") {
+          const percent = Math.round((payload.completed / payload.total) * 100);
+          progressBar.style.width = `${percent}%`;
+          progressText.textContent = `Finished ${payload.provider} (${payload.found} items)`;
+          progressCount.textContent = `${payload.completed} / ${payload.total}`;
+
+          const chip = progressSites.querySelector(`[data-provider="${payload.provider_id}"]`);
+          if (chip) {
+            const status = payload.found === 0 ? "empty" : payload.status;
+            chip.setAttribute("data-status", status);
+          }
+        } else if (payload.type === "done") {
+          progressBar.style.width = "100%";
+          progressText.textContent = `All sites finished in ${payload.elapsed}s`;
+          progressCount.textContent = `${progressSites.children.length} / ${progressSites.children.length}`;
+          lastResults = payload.results || [];
+          renderResults(sortResults(lastResults, sort, lastQuery), sort);
+          eventSource.close();
+        }
+      };
+
+      eventSource.onerror = () => {
+        progressText.textContent = "Streaming interrupted. Try again.";
+        eventSource.close();
+      };
+    };
+
+    if (form) {
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const formData = new FormData(form);
+        const query = String(formData.get("q") || "").trim();
+        const limit = String(formData.get("limit") || "35");
+        startSearch(query, limit);
+      });
+
+      const sortSelect = form.querySelector('select[name="sort"]');
+      if (sortSelect) {
+        sortSelect.addEventListener("change", () => {
+          if (!lastResults.length) {
+            return;
+          }
+          const sort = sortSelect.value || "relevance";
+          renderResults(sortResults(lastResults, sort, lastQuery), sort);
+        });
+      }
+    }
+
+    initSourceFilters();
+  </script>
 </body>
 </html>
