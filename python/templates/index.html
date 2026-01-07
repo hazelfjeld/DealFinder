@@ -3,6 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Search electronics across major retailers and marketplaces to find the best prices fast.">
+  <meta name="theme-color" content="#0f141a">
   <title>Deal Finder</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -192,6 +194,14 @@
     .section-title { display: flex; align-items: center; justify-content: space-between; margin-top: 28px; }
     .muted { color: var(--muted); }
     .empty { text-align: center; margin-top: 40px; color: var(--muted); }
+    .notice {
+      margin-top: 16px;
+      padding: 12px 14px;
+      border-radius: 12px;
+      border: 1px solid rgba(255, 107, 107, 0.3);
+      background: rgba(255, 107, 107, 0.12);
+      color: var(--text);
+    }
     .tag-list { display: flex; gap: 10px; flex-wrap: wrap; }
     .chip { padding: 8px 12px; border-radius: 999px; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.06); }
     .chip-toggle { cursor: pointer; transition: opacity 0.2s ease, transform 0.2s ease; }
@@ -318,11 +328,15 @@
       <button type="submit">Find deals</button>
     </form>
 
+    {% if error_message %}
+      <div class="notice">{{ error_message }}</div>
+    {% endif %}
+
     <div id="progress-area" class="progress-area hidden" aria-live="polite">
       <div class="progress-header">
         <div>
           <strong>Scraping in progress</strong>
-          <div class="muted" id="progress-text">Starting…</div>
+          <div class="muted" id="progress-text">Starting...</div>
         </div>
         <div class="pill" id="progress-count">0 / {{ providers|length }}</div>
       </div>
@@ -630,7 +644,7 @@
       resultsArea.innerHTML = "";
       progressArea.classList.remove("hidden");
       progressBar.style.width = "0%";
-      progressText.textContent = "Starting…";
+      progressText.textContent = "Starting...";
       progressCount.textContent = `0 / ${progressSites.children.length}`;
 
       Array.from(progressSites.children).forEach((chip) => {
@@ -696,4 +710,5 @@
   </script>
 </body>
 </html>
+
 

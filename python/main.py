@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import csv
 import json
+import logging
+import os
 import re
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from collections import defaultdict
+from collections import defaultdict, deque
 from dataclasses import dataclass, asdict
 from typing import Any, Dict, Iterable, List, Optional
 from urllib.parse import quote_plus
@@ -14,6 +17,13 @@ from flask import Flask, Response, jsonify, render_template, request
 from playwright.sync_api import TimeoutError, sync_playwright
 
 app = Flask(__name__, template_folder="templates")
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+logger = logging.getLogger("dealfinder")
+
+START_TIME = time.time()
 
 
 @dataclass(frozen=True)
@@ -27,8 +37,33 @@ class Product:
 
 
 PRICE_PATTERN = re.compile(r"\$\s*([0-9]{1,3}(?:,[0-9]{3})*|[0-9]+)(?:\.(\d{2}))?")
-DEFAULT_SETTLE_MS = 1600
-MAX_CONCURRENT_PROVIDERS = 6
+
+
+def env_int(name: str, default: int, *, min_value: int | None = None, max_value: int | None = None) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    if min_value is not None:
+        value = max(min_value, value)
+    if max_value is not None:
+        value = min(max_value, value)
+    return value
+
+
+DEFAULT_SETTLE_MS = env_int("DEFAULT_SETTLE_MS", 1600, min_value=500, max_value=10000)
+NAV_TIMEOUT_MS = env_int("NAV_TIMEOUT_MS", 35000, min_value=10000, max_value=60000)
+WAIT_FOR_SELECTOR_TIMEOUT_MS = env_int("WAIT_FOR_SELECTOR_TIMEOUT_MS", 12000, min_value=2000, max_value=30000)
+MAX_CONCURRENT_PROVIDERS = env_int("MAX_CONCURRENT_PROVIDERS", 6, min_value=1, max_value=16)
+MAX_ITEMS_PER_SITE_DEFAULT = env_int("MAX_ITEMS_PER_SITE", 35, min_value=5, max_value=120)
+MAX_QUERY_LENGTH = env_int("MAX_QUERY_LENGTH", 120, min_value=10, max_value=300)
+RATE_LIMIT_PER_MINUTE = env_int("RATE_LIMIT_PER_MINUTE", 30, min_value=1, max_value=120)
+RATE_LIMIT_WINDOW_SEC = 60
+HEADLESS = os.getenv("PLAYWRIGHT_HEADLESS", "1") != "0"
+ALLOWED_SORTS = {"relevance", "price_low", "price_high", "ending_soon"}
 STOPWORDS = {
     "a",
     "an",
@@ -235,6 +270,58 @@ SEARCH_PROVIDERS: List[Dict[str, Any]] = [
         "product_path_patterns": [r"/p/"],
     },
 ]
+
+_rate_limit_lock = threading.Lock()
+_rate_limit_hits: Dict[str, deque[float]] = defaultdict(deque)
+
+
+def client_ip() -> str:
+    forwarded = request.headers.get("X-Forwarded-For", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.remote_addr or "unknown"
+
+
+def is_rate_limited(ip: str) -> bool:
+    if RATE_LIMIT_PER_MINUTE <= 0:
+        return False
+    now = time.time()
+    with _rate_limit_lock:
+        window = _rate_limit_hits[ip]
+        while window and (now - window[0]) > RATE_LIMIT_WINDOW_SEC:
+            window.popleft()
+        if len(window) >= RATE_LIMIT_PER_MINUTE:
+            return True
+        window.append(now)
+    return False
+
+
+def normalize_query(raw: str) -> str:
+    normalized = re.sub(r"\s+", " ", raw).strip()
+    return normalized[:MAX_QUERY_LENGTH]
+
+
+def parse_int_param(raw_value: str | None, default: int, *, min_value: int, max_value: int) -> int:
+    try:
+        value = int(raw_value or default)
+    except ValueError:
+        return default
+    return max(min_value, min(max_value, value))
+
+
+def parse_bool_flag(raw_value: str | None, default: bool) -> bool:
+    if raw_value is None:
+        return default
+    return raw_value not in {"0", "false", "False", "no", "off"}
+
+
+@app.after_request
+def add_security_headers(response):
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Cross-Origin-Resource-Policy", "same-site")
+    return response
 
 
 def parse_price_to_float(price_text: str) -> Optional[float]:
@@ -696,11 +783,11 @@ def scrape_provider_page(
     if provider.get("id") == "ebay" and not include_auctions:
         search_url = f"{search_url}&LH_BIN=1&LH_Auction=0"
 
-    page.goto(search_url, wait_until="domcontentloaded", timeout=35000)
+    page.goto(search_url, wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS)
     wait_for_selector = provider.get("wait_for_selector")
     if wait_for_selector:
         try:
-            page.wait_for_selector(wait_for_selector, timeout=12000)
+            page.wait_for_selector(wait_for_selector, timeout=WAIT_FOR_SELECTOR_TIMEOUT_MS)
         except TimeoutError:
             pass
     page.wait_for_timeout(provider.get("settle_ms", DEFAULT_SETTLE_MS))
@@ -752,7 +839,7 @@ def scrape_provider_standalone(
     status = "ok"
     products: List[Product] = []
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=True)
+        browser = playwright.chromium.launch(headless=HEADLESS)
         context = browser.new_context(
             viewport={"width": 1400, "height": 900},
             locale="en-US",
@@ -775,8 +862,10 @@ def scrape_provider_standalone(
             )
         except TimeoutError:
             status = "timeout"
+            logger.warning("provider timeout: %s", provider.get("name"))
         except Exception:
             status = "error"
+            logger.exception("provider error: %s", provider.get("name"))
         finally:
             page.close()
             context.close()
@@ -848,7 +937,12 @@ def scrape_all_providers(
             all_products.extend(products)
 
     elapsed = time.perf_counter() - started
-    print(f"[debug] scraped {len(all_products)} products in {elapsed:.2f}s across {len(SEARCH_PROVIDERS)} sites")
+    logger.info(
+        "scraped %s products in %.2fs across %s sites",
+        len(all_products),
+        elapsed,
+        len(SEARCH_PROVIDERS),
+    )
     return sort_products(all_products, query, sort_by)
 
 
@@ -914,14 +1008,30 @@ def group_by_source(products: Iterable[Product]) -> Dict[str, List[Product]]:
 
 @app.route("/")
 def index():
-    query = (request.args.get("q") or "").strip()
-    max_items = int(request.args.get("limit") or 35)
-    include_auctions = (request.args.get("auctions") or "1") != "0"
+    query = normalize_query(request.args.get("q") or "")
+    max_items = parse_int_param(
+        request.args.get("limit"),
+        MAX_ITEMS_PER_SITE_DEFAULT,
+        min_value=5,
+        max_value=120,
+    )
+    include_auctions = parse_bool_flag(request.args.get("auctions"), True)
     sort_by = (request.args.get("sort") or "relevance").strip()
+    if sort_by not in ALLOWED_SORTS:
+        sort_by = "relevance"
 
     products: List[Product] = []
     grouped: Dict[str, List[Product]] = {}
     if query:
+        if is_rate_limited(client_ip()):
+            return render_template(
+                "index.html",
+                query=query,
+                products=[],
+                grouped={},
+                providers=SEARCH_PROVIDERS,
+                error_message="Too many requests. Please wait a moment and try again.",
+            ), 429
         products = scrape_all_providers(
             query,
             max_items_per_site=max_items,
@@ -936,18 +1046,28 @@ def index():
         products=products,
         grouped=grouped,
         providers=SEARCH_PROVIDERS,
+        error_message=None,
     )
 
 
 @app.route("/api/search")
 def api_search():
-    query = (request.args.get("q") or "").strip()
-    max_items = int(request.args.get("limit") or 35)
-    include_auctions = (request.args.get("auctions") or "1") != "0"
+    query = normalize_query(request.args.get("q") or "")
+    max_items = parse_int_param(
+        request.args.get("limit"),
+        MAX_ITEMS_PER_SITE_DEFAULT,
+        min_value=5,
+        max_value=120,
+    )
+    include_auctions = parse_bool_flag(request.args.get("auctions"), True)
     sort_by = (request.args.get("sort") or "relevance").strip()
+    if sort_by not in ALLOWED_SORTS:
+        sort_by = "relevance"
 
     if not query:
         return jsonify({"error": "Query is required"}), 400
+    if is_rate_limited(client_ip()):
+        return jsonify({"error": "Rate limit exceeded. Try again shortly."}), 429
 
     products = scrape_all_providers(
         query,
@@ -960,13 +1080,22 @@ def api_search():
 
 @app.route("/api/search/stream")
 def api_search_stream():
-    query = (request.args.get("q") or "").strip()
-    max_items = int(request.args.get("limit") or 35)
-    include_auctions = (request.args.get("auctions") or "1") != "0"
+    query = normalize_query(request.args.get("q") or "")
+    max_items = parse_int_param(
+        request.args.get("limit"),
+        MAX_ITEMS_PER_SITE_DEFAULT,
+        min_value=5,
+        max_value=120,
+    )
+    include_auctions = parse_bool_flag(request.args.get("auctions"), True)
     sort_by = (request.args.get("sort") or "relevance").strip()
+    if sort_by not in ALLOWED_SORTS:
+        sort_by = "relevance"
 
     if not query:
         return jsonify({"error": "Query is required"}), 400
+    if is_rate_limited(client_ip()):
+        return jsonify({"error": "Rate limit exceeded. Try again shortly."}), 429
 
     def event_stream():
         for event in stream_scrape_events(
@@ -977,13 +1106,33 @@ def api_search_stream():
         ):
             yield f"data: {json.dumps(event)}\n\n"
 
-    return Response(event_stream(), mimetype="text/event-stream")
+    return Response(
+        event_stream(),
+        mimetype="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.route("/health")
 def health():
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "uptime_sec": int(time.time() - START_TIME),
+    }
+
+
+@app.route("/robots.txt")
+def robots():
+    lines = [
+        "User-agent: *",
+        "Disallow: /api/search",
+        "Disallow: /api/search/stream",
+    ]
+    return Response("\n".join(lines), mimetype="text/plain")
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    host = os.getenv("APP_HOST", "0.0.0.0")
+    port = env_int("PORT", 5000, min_value=1, max_value=65535)
+    debug = os.getenv("APP_DEBUG", "0") == "1"
+    app.run(host=host, port=port, debug=debug)
