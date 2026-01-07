@@ -48,6 +48,41 @@ STOPWORDS = {
     "to",
     "with",
 }
+ACCESSORY_KEYWORDS = {
+    "adapter",
+    "bag",
+    "battery",
+    "bundle",
+    "cable",
+    "case",
+    "charger",
+    "charging",
+    "controller",
+    "cord",
+    "cover",
+    "dock",
+    "earbuds",
+    "earphones",
+    "grip",
+    "headset",
+    "holder",
+    "joystick",
+    "keyboard",
+    "kit",
+    "mouse",
+    "mount",
+    "pouch",
+    "power",
+    "protector",
+    "protective",
+    "screen",
+    "shell",
+    "skin",
+    "stand",
+    "strap",
+    "stylus",
+    "travel",
+}
 
 SEARCH_PROVIDERS: List[Dict[str, Any]] = [
     {
@@ -78,6 +113,8 @@ SEARCH_PROVIDERS: List[Dict[str, Any]] = [
         "name": "Slickdeals",
         "base_url": "https://slickdeals.net",
         "search_url": "https://slickdeals.net/newsearch.php?src=SearchBarV2&q={query}&pp=25",
+        "wait_for_selector": '.dealCard, .searchResult, a[href*="/f/"], a[href*="/deal/"]',
+        "settle_ms": 2400,
         "product_path_patterns": [r"/f/", r"/deal/"],
     },
     {
@@ -85,6 +122,8 @@ SEARCH_PROVIDERS: List[Dict[str, Any]] = [
         "name": "Walmart",
         "base_url": "https://www.walmart.com",
         "search_url": "https://www.walmart.com/search?q={query}",
+        "wait_for_selector": '[data-automation-id="product-tile"], [data-item-id]',
+        "settle_ms": 2600,
         "product_path_patterns": [r"/ip/"],
     },
     {
@@ -92,6 +131,8 @@ SEARCH_PROVIDERS: List[Dict[str, Any]] = [
         "name": "Best Buy",
         "base_url": "https://www.bestbuy.com",
         "search_url": "https://www.bestbuy.com/site/searchpage.jsp?st={query}",
+        "wait_for_selector": ".sku-item",
+        "settle_ms": 2600,
         "product_path_patterns": [r"/site/.+?/\d+\.p"],
     },
     {
@@ -106,35 +147,9 @@ SEARCH_PROVIDERS: List[Dict[str, Any]] = [
         "name": "Target",
         "base_url": "https://www.target.com",
         "search_url": "https://www.target.com/s?searchTerm={query}",
+        "wait_for_selector": 'a[href*="/p/"]',
+        "settle_ms": 2600,
         "product_path_patterns": [r"/p/"],
-    },
-    {
-        "id": "homedepot",
-        "name": "Home Depot",
-        "base_url": "https://www.homedepot.com",
-        "search_url": "https://www.homedepot.com/s/{query}",
-        "product_path_patterns": [r"/p/"],
-    },
-    {
-        "id": "lowes",
-        "name": "Lowe's",
-        "base_url": "https://www.lowes.com",
-        "search_url": "https://www.lowes.com/search?searchTerm={query}",
-        "product_path_patterns": [r"/pd/"],
-    },
-    {
-        "id": "macys",
-        "name": "Macy's",
-        "base_url": "https://www.macys.com",
-        "search_url": "https://www.macys.com/shop/search?keyword={query}",
-        "product_path_patterns": [r"/shop/product/"],
-    },
-    {
-        "id": "kohls",
-        "name": "Kohl's",
-        "base_url": "https://www.kohls.com",
-        "search_url": "https://www.kohls.com/search.jsp?search={query}",
-        "product_path_patterns": [r"/product/prd-"],
     },
     {
         "id": "costco",
@@ -155,6 +170,8 @@ SEARCH_PROVIDERS: List[Dict[str, Any]] = [
         "name": "AliExpress",
         "base_url": "https://www.aliexpress.us",
         "search_url": "https://www.aliexpress.us/w/wholesale-{query}.html",
+        "wait_for_selector": 'a[href*="/item/"]',
+        "settle_ms": 3000,
         "product_path_patterns": [r"/item/"],
     },
     {
@@ -162,42 +179,9 @@ SEARCH_PROVIDERS: List[Dict[str, Any]] = [
         "name": "Temu",
         "base_url": "https://www.temu.com",
         "search_url": "https://www.temu.com/search_result.html?search_key={query}",
+        "wait_for_selector": 'a[href*="goods.html"]',
+        "settle_ms": 3000,
         "product_path_patterns": [r"/goods.html"],
-    },
-    {
-        "id": "etsy",
-        "name": "Etsy",
-        "base_url": "https://www.etsy.com",
-        "search_url": "https://www.etsy.com/search?q={query}",
-        "product_path_patterns": [r"/listing/"],
-    },
-    {
-        "id": "mercari",
-        "name": "Mercari",
-        "base_url": "https://www.mercari.com",
-        "search_url": "https://www.mercari.com/search/?keyword={query}",
-        "product_path_patterns": [r"/item/"],
-    },
-    {
-        "id": "poshmark",
-        "name": "Poshmark",
-        "base_url": "https://poshmark.com",
-        "search_url": "https://poshmark.com/search?query={query}",
-        "product_path_patterns": [r"/listing/"],
-    },
-    {
-        "id": "stockx",
-        "name": "StockX",
-        "base_url": "https://stockx.com",
-        "search_url": "https://stockx.com/search?s={query}",
-        "product_path_patterns": [r"/buy/", r"/sell/"],
-    },
-    {
-        "id": "goat",
-        "name": "GOAT",
-        "base_url": "https://www.goat.com",
-        "search_url": "https://www.goat.com/search?query={query}",
-        "product_path_patterns": [r"/sneakers/", r"/apparel/", r"/electronics/", r"/accessories/"],
     },
     {
         "id": "bhphoto",
@@ -218,56 +202,9 @@ SEARCH_PROVIDERS: List[Dict[str, Any]] = [
         "name": "GameStop",
         "base_url": "https://www.gamestop.com",
         "search_url": "https://www.gamestop.com/search/?q={query}",
+        "wait_for_selector": 'a[href*="/products/"]',
+        "settle_ms": 2600,
         "product_path_patterns": [r"/products/"],
-    },
-    {
-        "id": "wayfair",
-        "name": "Wayfair",
-        "base_url": "https://www.wayfair.com",
-        "search_url": "https://www.wayfair.com/keyword.php?keyword={query}",
-        "product_path_patterns": [r"/pdp/"],
-    },
-    {
-        "id": "bedbathbeyond",
-        "name": "Bed Bath & Beyond",
-        "base_url": "https://www.bedbathandbeyond.com",
-        "search_url": "https://www.bedbathandbeyond.com/search?keyword={query}",
-        "product_path_patterns": [r"/product/"],
-    },
-    {
-        "id": "chewy",
-        "name": "Chewy",
-        "base_url": "https://www.chewy.com",
-        "search_url": "https://www.chewy.com/s?query={query}",
-        "product_path_patterns": [r"/p/"],
-    },
-    {
-        "id": "dicks",
-        "name": "Dick's Sporting Goods",
-        "base_url": "https://www.dickssportinggoods.com",
-        "search_url": "https://www.dickssportinggoods.com/search/SearchDisplay?searchTerm={query}",
-        "product_path_patterns": [r"/p/"],
-    },
-    {
-        "id": "rei",
-        "name": "REI",
-        "base_url": "https://www.rei.com",
-        "search_url": "https://www.rei.com/search?q={query}",
-        "product_path_patterns": [r"/product/"],
-    },
-    {
-        "id": "ulta",
-        "name": "Ulta",
-        "base_url": "https://www.ulta.com",
-        "search_url": "https://www.ulta.com/shop/search?query={query}",
-        "product_path_patterns": [r"/p/"],
-    },
-    {
-        "id": "sephora",
-        "name": "Sephora",
-        "base_url": "https://www.sephora.com",
-        "search_url": "https://www.sephora.com/search?keyword={query}",
-        "product_path_patterns": [r"/product/"],
     },
     {
         "id": "staples",
@@ -282,13 +219,6 @@ SEARCH_PROVIDERS: List[Dict[str, Any]] = [
         "base_url": "https://www.officedepot.com",
         "search_url": "https://www.officedepot.com/catalog/search.do?searchTerm={query}",
         "product_path_patterns": [r"/a/products/"],
-    },
-    {
-        "id": "nordstrom",
-        "name": "Nordstrom",
-        "base_url": "https://www.nordstrom.com",
-        "search_url": "https://www.nordstrom.com/sr?keyword={query}",
-        "product_path_patterns": [r"/s/"],
     },
     {
         "id": "dell",
@@ -352,15 +282,38 @@ def is_relevant_name(name: str, tokens: List[str]) -> bool:
     return bool(name_tokens.intersection(tokens))
 
 
-def relevance_score(name: str, tokens: List[str], query: str) -> tuple[int, int, int]:
+def accessory_penalty(name_tokens: set[str], tokens: List[str]) -> int:
     if not tokens:
-        return (0, 0, 0)
+        return 0
+    accessory_hits = name_tokens.intersection(ACCESSORY_KEYWORDS)
+    if not accessory_hits:
+        return 0
+    if accessory_hits.intersection(tokens):
+        return 0
+    return 1
+
+
+def console_boost(name_tokens: set[str], tokens: List[str]) -> int:
+    if not {"switch", "lite"}.issubset(tokens):
+        return 0
+    if {"console", "system", "handheld"}.intersection(name_tokens):
+        return 1
+    if {"nintendo", "switch", "lite"}.issubset(name_tokens):
+        return 1
+    return 0
+
+
+def relevance_sort_key(name: str, tokens: List[str], query: str) -> tuple[int, int, int, int, int]:
+    if not tokens:
+        return (0, 0, 0, 0, 0)
     name_lower = name.lower()
     name_tokens = set(tokenize(name))
     match_count = sum(1 for token in tokens if token in name_tokens)
     exact_phrase = 1 if query.lower() in name_lower else 0
     missing = len(tokens) - match_count
-    return (exact_phrase, match_count, -missing)
+    boost = console_boost(name_tokens, tokens)
+    penalty = accessory_penalty(name_tokens, tokens)
+    return (exact_phrase, match_count, missing, boost, penalty)
 
 
 def is_product_url(url: str, provider: Dict[str, Any]) -> bool:
@@ -462,14 +415,20 @@ def extract_newegg_products(page) -> List[Dict[str, Any]]:
 def extract_walmart_products(page) -> List[Dict[str, Any]]:
     extraction_script = r"""
     () => {
-      const items = Array.from(document.querySelectorAll('[data-automation-id="product-tile"], [data-item-id]'));
+      const items = Array.from(
+        document.querySelectorAll(
+          '[data-automation-id="product-tile"], [data-item-id], [data-testid="item-stack"]'
+        )
+      );
       const results = [];
       const seen = new Set();
 
       for (const item of items) {
         const link = item.querySelector('a[href*="/ip/"]');
-        const title = item.querySelector('[data-automation-id="product-title"]') || link;
-        const price = item.querySelector('[data-automation-id="product-price"], span[itemprop="price"]');
+        const title = item.querySelector('[data-automation-id="product-title"], [data-testid="product-title"]') || link;
+        const price = item.querySelector(
+          '[data-automation-id="product-price"], [data-testid="product-price"], span[itemprop="price"]'
+        );
 
         if (!link) continue;
         const href = link.getAttribute('href') || '';
@@ -477,6 +436,46 @@ def extract_walmart_products(page) -> List[Dict[str, Any]]:
         const priceText = (price ? price.innerText : '').trim();
         const image = item.querySelector('img');
         const imageUrl = image ? (image.getAttribute('src') || '') : '';
+
+        const key = href + '|' + name + '|' + priceText;
+        if (seen.has(key)) continue;
+        seen.add(key);
+
+        results.push({ href, name, priceText, imageUrl });
+      }
+
+      if (results.length) {
+        return results;
+      }
+
+      const priceRegex = /\$\s*\d[\d,]*(?:\.\d{2})?/;
+      const links = Array.from(document.querySelectorAll('a[href*="/ip/"]'));
+      for (const link of links) {
+        const href = link.getAttribute('href');
+        if (!href) continue;
+
+        let container = link;
+        let containerText = '';
+        for (let i = 0; i < 7; i++) {
+          if (!container || !container.parentElement) break;
+          containerText = (container.innerText || '').trim();
+          if (priceRegex.test(containerText)) break;
+          container = container.parentElement;
+        }
+
+        if (!priceRegex.test(containerText)) continue;
+
+        let name = (link.innerText || '').trim();
+        if (!name) {
+          const img = link.querySelector('img[alt]') || (container ? container.querySelector('img[alt]') : null);
+          if (img && img.getAttribute('alt')) name = img.getAttribute('alt').trim();
+        }
+        let imageUrl = '';
+        const imgTag = link.querySelector('img') || (container ? container.querySelector('img') : null);
+        if (imgTag && imgTag.getAttribute('src')) imageUrl = imgTag.getAttribute('src');
+
+        const priceMatch = containerText.match(priceRegex);
+        const priceText = priceMatch ? priceMatch[0] : '';
 
         const key = href + '|' + name + '|' + priceText;
         if (seen.has(key)) continue;
@@ -525,21 +524,68 @@ def extract_bestbuy_products(page) -> List[Dict[str, Any]]:
 def extract_slickdeals_products(page) -> List[Dict[str, Any]]:
     extraction_script = r"""
     () => {
-      const items = Array.from(document.querySelectorAll('.dealCard, .resultRow, .dp-p, .searchResult'));
+      const items = Array.from(
+        document.querySelectorAll(
+          '.dealCard, .resultRow, .dp-p, .searchResult, [data-threadid], [data-id]'
+        )
+      );
       const results = [];
       const seen = new Set();
 
       for (const item of items) {
-        const title = item.querySelector('.dealTitle, .dealTitle a, a.dealTitle, a[data-did]');
-        const price = item.querySelector('.dealPrice, .price, .dealCard-price');
+        const title = item.querySelector(
+          '.dealTitle, .dealTitle a, a.dealTitle, a[data-did], a[href*="/f/"], a[href*="/deal/"]'
+        );
+        const price = item.querySelector('.dealPrice, .price, .dealCard-price, [data-price]');
         const link = title && title.tagName.toLowerCase() === 'a' ? title : (title ? title.querySelector('a') : null);
         if (!link) continue;
 
         const href = link.getAttribute('href') || '';
         const name = (link.innerText || '').trim();
-        const priceText = (price ? price.innerText : '').trim();
+        const priceText = (price ? (price.innerText || price.getAttribute('data-price') || '') : '').trim();
         const image = item.querySelector('img');
         const imageUrl = image ? (image.getAttribute('src') || '') : '';
+
+        const key = href + '|' + name + '|' + priceText;
+        if (seen.has(key)) continue;
+        seen.add(key);
+
+        results.push({ href, name, priceText, imageUrl });
+      }
+
+      if (results.length) {
+        return results;
+      }
+
+      const priceRegex = /\$\s*\d[\d,]*(?:\.\d{2})?/;
+      const links = Array.from(document.querySelectorAll('a[href*="/f/"], a[href*="/deal/"]'));
+
+      for (const link of links) {
+        const href = link.getAttribute('href');
+        if (!href) continue;
+
+        let container = link;
+        let containerText = '';
+        for (let i = 0; i < 7; i++) {
+          if (!container || !container.parentElement) break;
+          containerText = (container.innerText || '').trim();
+          if (priceRegex.test(containerText)) break;
+          container = container.parentElement;
+        }
+
+        if (!priceRegex.test(containerText)) continue;
+
+        let name = (link.innerText || '').trim();
+        if (!name) {
+          const img = link.querySelector('img[alt]') || (container ? container.querySelector('img[alt]') : null);
+          if (img && img.getAttribute('alt')) name = img.getAttribute('alt').trim();
+        }
+        let imageUrl = '';
+        const imgTag = link.querySelector('img') || (container ? container.querySelector('img') : null);
+        if (imgTag && imgTag.getAttribute('src')) imageUrl = imgTag.getAttribute('src');
+
+        const priceMatch = containerText.match(priceRegex);
+        const priceText = priceMatch ? priceMatch[0] : '';
 
         const key = href + '|' + name + '|' + priceText;
         if (seen.has(key)) continue;
@@ -672,6 +718,20 @@ def scrape_provider_page(
         raw_items = extract_slickdeals_products(page)
     else:
         raw_items = extract_products_from_dom(page)
+    if not raw_items:
+        page.wait_for_timeout(1400)
+        if provider_id == "pawnamerica":
+            raw_items = extract_pawnamerica_products(page)
+        elif provider_id == "newegg":
+            raw_items = extract_newegg_products(page)
+        elif provider_id == "walmart":
+            raw_items = extract_walmart_products(page)
+        elif provider_id == "bestbuy":
+            raw_items = extract_bestbuy_products(page)
+        elif provider_id == "slickdeals":
+            raw_items = extract_slickdeals_products(page)
+        else:
+            raw_items = extract_products_from_dom(page)
     return coerce_products(
         raw_items,
         base_url=base_url,
@@ -693,7 +753,17 @@ def scrape_provider_standalone(
     products: List[Product] = []
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)
-        context = browser.new_context(viewport={"width": 1400, "height": 900})
+        context = browser.new_context(
+            viewport={"width": 1400, "height": 900},
+            locale="en-US",
+            timezone_id="America/Chicago",
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/121.0.0.0 Safari/537.36"
+            ),
+            extra_http_headers={"Accept-Language": "en-US,en;q=0.9"},
+        )
         page = context.new_page()
         try:
             products = scrape_provider_page(
@@ -731,15 +801,24 @@ def sort_products(products: List[Product], query: str, sort_by: str) -> List[Pro
             key=lambda p: (p.auction_end is None, p.auction_end or 10**18),
         )
     tokens = query_tokens(query)
+    def sort_key(product: Product) -> tuple:
+        exact_phrase, match_count, missing, boost, penalty = relevance_sort_key(
+            product.name,
+            tokens,
+            query,
+        )
+        return (
+            -exact_phrase,
+            -match_count,
+            missing,
+            -boost,
+            penalty,
+            product.price is None,
+            product.price or 10**12,
+        )
     return sorted(
         products,
-        key=lambda p: (
-            -relevance_score(p.name, tokens, query)[0],
-            -relevance_score(p.name, tokens, query)[1],
-            -relevance_score(p.name, tokens, query)[2],
-            p.price is None,
-            p.price or 10**12,
-        ),
+        key=sort_key,
     )
 
 
